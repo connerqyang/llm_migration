@@ -7,12 +7,14 @@ from pathlib import Path
 load_dotenv()
 
 class GitOperations:
-    def __init__(self, repo_path=None):
+    def __init__(self, repo_path=None, subrepo_path=None, file_path=None):
         """
         Initialize GitOperations with modular path building support.
         
         Args:
             repo_path: Base repository path. If None, uses LOCAL_REPO_PATH from env.
+            subrepo_path: Subrepository path relative to repo_path. Used for operations like yarn build.
+            file_path: Path to the file relative to subrepo_path.
         """
         self.repo_url = os.getenv("GIT_REPO_URL")
         self.auth_token = os.getenv("GIT_AUTH_TOKEN")
@@ -35,6 +37,22 @@ class GitOperations:
         # Use provided repo_path or get from environment
         self.repo_path = repo_path if repo_path else os.getenv("LOCAL_REPO_PATH")
         
+        # Make paths absolute
+        # Store subrepo_path as absolute path
+        if subrepo_path:
+            self.subrepo_path = str(Path(self.repo_path) / subrepo_path)
+        else:
+            self.subrepo_path = None
+            
+        # Store file_path as absolute path
+        if file_path:
+            if self.subrepo_path:
+                self.file_path = str(Path(self.subrepo_path) / file_path)
+            else:
+                self.file_path = str(Path(self.repo_path) / file_path)
+        else:
+            self.file_path = None
+        
         # Verify the repository path exists
         if not os.path.exists(self.repo_path):
             raise ValueError(f"Repository path does not exist: {self.repo_path}")
@@ -42,47 +60,65 @@ class GitOperations:
         # Use existing repository
         self.repo = Repo(self.repo_path)
         
-    def get_absolute_path(self, file_path):
-        """
-        Build a complete file path using the repository path and file path
-        
-        Args:
-            file_path: Full path to the file including any page directory
+        # Fetch latest changes from remote master branch
+        try:
+            print("Fetching latest changes from remote master branch...")
+            origin = self.repo.remote(name='origin')
+            origin.fetch('master')
             
-        Returns:
-            Complete path to the file (absolute path)
+            # Checkout master branch if it exists locally
+            if 'master' in [b.name for b in self.repo.branches]:
+                print("Checking out local master branch...")
+                self.repo.git.checkout('master')
+            else:
+                # If master branch doesn't exist locally, create it tracking the remote
+                print("Creating local master branch tracking remote...")
+                self.repo.git.checkout('-b', 'master', 'origin/master')
+            
+            # Pull latest changes from remote
+            print("Pulling latest changes from remote master...")
+            origin.pull('master')
+            print("Successfully updated repository with latest changes.")
+        except Exception as e:
+            print(f"Warning: Could not update repository with latest changes: {str(e)}")
+            print("Continuing with existing repository state.")
+            # Don't raise the exception, just continue with the current state
+            
+    def get_subrepo_path(self):
         """
-        # Join repo_path and file_path to create the complete path
-        # Use Path for better cross-platform path handling
-        return str(Path(self.repo_path) / file_path)
+        Get the full path to the subrepo directory
+        
+        Returns:
+            Complete path to the subrepo directory (absolute path)
+        """
+        if self.subrepo_path:
+            return self.subrepo_path
+        else:
+            return self.repo_path
     
-    def read_file(self, file_path):
+    def read_file(self):
         """
         Read a file from the repository
         
-        Args:
-            file_path: Relative path to the file within the page directory
-            
         Returns:
             String content of the file
         """
-        full_path = self.get_absolute_path(file_path)
+        full_path = self.file_path
         with open(full_path, 'r', encoding='utf-8') as file:
             return file.read()
     
-    def write_file(self, file_path, content):
+    def write_file(self, content):
         """
         Write content to a file without committing
         
         Args:
-            file_path: Relative path to the file within the page directory
             content: Content to write to the file
             
         Returns:
             True if successful, False otherwise
         """
         try:
-            full_path = self.get_absolute_path(file_path)
+            full_path = self.file_path
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             with open(full_path, 'w', encoding='utf-8') as file:
@@ -94,7 +130,7 @@ class GitOperations:
     
     def create_branch(self, branch_name, base_branch="master"):
         """
-        Create a new branch from latest origin/base_branch and switch to it
+        Create a new branch from base_branch and switch to it
         
         Args:
             branch_name: Name of the new branch
@@ -103,16 +139,14 @@ class GitOperations:
         Returns:
             Name of the created branch
         """
-        # First checkout the base branch
+        # We already fetched and pulled the latest changes in __init__
+        # Just make sure we're on the base branch
         if base_branch in [b.name for b in self.repo.branches]:
             self.repo.git.checkout(base_branch)
         else:
-            # If base branch doesn't exist locally, create it tracking the remote
+            # This should rarely happen since we already tried to set up master in __init__
+            print(f"Warning: Base branch {base_branch} not found locally. Creating it now.")
             self.repo.git.checkout('-b', base_branch, f'origin/{base_branch}')
-        
-        # Pull latest changes from remote
-        origin = self.repo.remote(name='origin')
-        origin.pull(base_branch)
         
         # Check if branch already exists
         if branch_name in [b.name for b in self.repo.branches]:
@@ -125,12 +159,11 @@ class GitOperations:
         branch.checkout()
         return branch.name
     
-    def commit_changes(self, file_path, content, commit_message):
+    def commit_changes(self, content, commit_message):
         """
         Write changes to a file and commit them
         
         Args:
-            file_path: Relative path to the file within the page directory
             content: New content to write to the file
             commit_message: Commit message
             
@@ -138,6 +171,10 @@ class GitOperations:
             The commit object
         """
         try:
+            # Ensure we have a file path set
+            if self.file_path is None:
+                raise ValueError("No default file path set in the constructor")
+                
             # Ensure git user is configured
             try:
                 # Check if user.name is configured
@@ -155,8 +192,8 @@ class GitOperations:
                 print("Setting temporary git user.email")
                 self.repo.git.config('--local', 'user.email', 'llm.migration@example.com')
             
-            # Create the full path to the file using the modular path building
-            full_path = self.get_absolute_path(file_path)
+            # Use the file path directly
+            full_path = self.file_path
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             # Write the content to the file
@@ -164,8 +201,8 @@ class GitOperations:
                 file.write(content)
             
             # Add the file to git index
-            print(f"Adding file to git: {file_path}")
-            self.repo.git.add(file_path)
+            print(f"Adding file to git: {self.file_path}")
+            self.repo.git.add(self.file_path)
             
             # Commit the changes using git.commit() instead of index.commit()
             print(f"Committing changes with message: {commit_message}")

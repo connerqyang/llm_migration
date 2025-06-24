@@ -148,9 +148,6 @@ Please migrate ONLY the {component_name} component according to the guidelines p
             Dictionary containing the migrated code and migration notes
         """
         try:
-            # Log the response for debugging
-            print("\nParsing LLM response (first 200 chars):\n", response[:200])
-            
             # Initialize result structure
             result = {
                 "migrated_code": "",

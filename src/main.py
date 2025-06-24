@@ -10,16 +10,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.utils.git_operations import GitOperations
 from src.utils.llm_client import LLMClient
 from src.utils.validation import ValidationOperations
-from tests.test_git_operations import test_git_operations
 
-def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_retries=3, steps=None):
+def run_validation_pipeline(git_ops, llm_client, migrated_code, max_retries=3, steps=None):
     """
     Run the validation pipeline on the migrated code
     
     Args:
-        git_ops: GitOperations instance
+        git_ops: GitOperations instance (with file_path already set)
         llm_client: LLMClient instance
-        file_path: Path to the file being migrated
         migrated_code: The migrated code to validate
         max_retries: Maximum number of retries for validation steps
         steps: List of validation steps to run (e.g., ['fix-lint', 'fix-ts'])
@@ -33,25 +31,23 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
     
     # Write the migrated code to a temporary file for validation
     # Extract the base name and extension
-    file_base, file_ext = os.path.splitext(file_path)
+    file_base, file_ext = os.path.splitext(git_ops.file_path)
     temp_file_path = f"{file_base}_temp{file_ext}"
     
     # Define the validation steps mapping
     validation_steps = {
         'fix-eslint': {'type': 'eslint', 'name': 'ESLint'},
+        'fix-build': {'type': 'build', 'name': 'Build'},
         'fix-tsc': {'type': 'typescript', 'name': 'TypeScript'}
     }
     
     # If no specific steps are provided, run all steps in sequence
     if not steps:
-        steps = ['fix-eslint', 'fix-tsc']
+        steps = ['fix-eslint', 'fix-build', 'fix-tsc']
     
     try:
         print(f"\n=== Running Validation Pipeline ===\n")
         print(f"Steps to run: {', '.join(steps)}\n")
-        
-        # Add more detailed logging
-        print(f"Validation steps mapping: {validation_steps}")
         
         updated_code = migrated_code
         
@@ -61,12 +57,14 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
         for step in steps:
             if step == 'fix-eslint':
                 initial_status['eslint'] = 'pending'
+            elif step == 'fix-build':
+                initial_status['build'] = 'pending'
             elif step == 'fix-tsc':
                 initial_status['tsc'] = 'pending'
                 
         # Add the initial status comment to the code
         if initial_status:
-            updated_code = validation_ops.update_migration_status(temp_file_path, updated_code, initial_status)
+            updated_code = validation_ops.update_migration_status(updated_code, initial_status)
         
         # Run each validation step in sequence
         for step in steps:
@@ -78,7 +76,6 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
             print(f"Running {step_info['name']} validation...")
             
             step_success, updated_code, remaining_errors = validation_ops.run_validation_step(
-                file_path=temp_file_path,
                 code=updated_code,
                 validation_type=step_info['type'],
                 llm_client=llm_client
@@ -86,11 +83,11 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
             
             if not step_success:
                 print(f"{step_info['name']} validation failed:")
-                for error in remaining_errors[:30]:  # Show first 5 errors
+                for error in remaining_errors[:30]:  # Show first 30 errors
                     print(f"- {error.get('message', 'Unknown error')}")
                 
                 if len(remaining_errors) > 30:
-                    print(f"... and {len(remaining_errors) - 5} more")
+                    print(f"... and {len(remaining_errors) - 30} more")
                 
                 print("Validation pipeline cannot continue.")
                 return False, updated_code
@@ -115,21 +112,21 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
     finally:
         # Clean up the temporary file
         try:
-            if os.path.exists(git_ops.get_absolute_path(temp_file_path)):
-                os.remove(git_ops.get_absolute_path(temp_file_path))
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
         except Exception as e:
             print(f"Warning: Failed to clean up temporary file: {str(e)}")
 
-def migrate_component(component_name, file_path, max_retries=3, steps=None):
-    """
-    Migrate a component in the specified file using the LLM client
+def migrate_component(component_name, file_path, max_retries=3, steps=None, subrepo_path=""):
+    """Migrate a component in the specified file using the LLM client
     
     Args:
         component_name: Name of the component to migrate (must be supported)
-        file_path: Full path to the file containing the component (including any page directory)
+        file_path: Path to the file containing the component relative to subrepo_path
         max_retries: Maximum number of retries for validation steps
         steps: List of validation steps to run (e.g., ['fix-lint', 'fix-ts'])
               If None, all steps will be run in sequence
+        subrepo_path: Subrepository path relative to LOCAL_REPO_PATH from .env
         
     Returns:
         True if successful, False otherwise
@@ -142,17 +139,31 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None):
         print(f"Initializing component migration for {component_name}...")
         
         # Initialize GitOperations for file access
-        git_ops = GitOperations()
-        print(f"Repository initialized at: {git_ops.repo_path}")
+        repo_path = os.getenv("LOCAL_REPO_PATH")
+        print(f"Attempting to initialize repository at: {repo_path} with subrepo: {subrepo_path if subrepo_path else 'None'}")
+        
+        # Check if the repository path exists
+        if not os.path.exists(repo_path):
+            print(f"Error: Repository path does not exist: {repo_path}")
+            return False
+            
+        # Check if the subrepo path exists if provided
+        if subrepo_path and not os.path.exists(os.path.join(repo_path, subrepo_path)):
+            print(f"Error: Subrepository path does not exist: {os.path.join(repo_path, subrepo_path)}")
+            print(f"Please check that the subrepo-path '{subrepo_path}' is correct and exists within {repo_path}")
+            return False
+            
+        git_ops = GitOperations(repo_path=repo_path, subrepo_path=subrepo_path, file_path=file_path)
+        print(f"Repository initialized at: {git_ops.repo_path} with subrepo: {git_ops.subrepo_path if git_ops.subrepo_path else 'None'}")
         
         # Show the full path that will be used
-        full_path = git_ops.get_absolute_path(file_path)
+        full_path = git_ops.file_path
         print(f"Full file path: {full_path}")
         
         # Read the file
-        print(f"Reading file: {file_path}")
+        print(f"Reading file: {full_path}")
         try:
-            original_content = git_ops.read_file(file_path)
+            original_content = git_ops.read_file()
             print(f"Successfully read file: {file_path}")
             print(f"Original file content (first 100 chars): {original_content[:100]}...")
         except Exception as e:
@@ -182,7 +193,6 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None):
             validation_success, validated_code = run_validation_pipeline(
                 git_ops, 
                 llm_client, 
-                file_path, 
                 final_code,
                 max_retries=max_retries,
                 steps=steps
@@ -198,12 +208,14 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None):
                 for step in steps:
                     if step == 'fix-eslint':
                         final_status['eslint'] = 'done'
+                    elif step == 'fix-build':
+                        final_status['build'] = 'done'
                     elif step == 'fix-tsc':
                         final_status['tsc'] = 'done'
                         
                 # Update the final status in the code
                 if final_status:
-                    final_code = validation_ops.update_migration_status(temp_file_path, final_code, final_status)
+                    final_code = validation_ops.update_migration_status(final_code, final_status)
             else:
                 print("\n=== Validation Failed ===\n")
                 print("Migration will proceed despite validation failures.")
@@ -236,7 +248,6 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None):
             print(f"\nCommitting changes to: {file_path}")
             validation_message = "(validated)" if validation_success else "(unvalidated)"
             commit = git_ops.commit_changes(
-                file_path, 
                 final_code, 
                 f"Migrate {component_name} component in {file_path} {validation_message}"
             )
@@ -270,14 +281,6 @@ def main():
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
     
-    # Test git operations command
-    git_parser = subparsers.add_parser("test-git", help="Test Git operations with modular path building")
-    git_parser.add_argument(
-        "--file-path", 
-        default="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx",
-        help="Full path to the file to modify (including any page directory)"
-    )
-    
     # Migrate component command
     migrate_parser = subparsers.add_parser("migrate", help="Migrate a UI component")
     
@@ -297,6 +300,11 @@ def main():
         help="Component to migrate"
     )
     migrate_parser.add_argument(
+        "--subrepo-path",
+        default="",
+        help="Subrepository path relative to LOCAL_REPO_PATH from .env"
+    )
+    migrate_parser.add_argument(
         "--file-path", 
         default="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx",
         help="Full path to the file containing the component (including any page directory)"
@@ -310,9 +318,9 @@ def main():
     migrate_parser.add_argument(
         "--step",
         nargs="*",
-        choices=['fix-eslint', 'fix-tsc'],
+        choices=['fix-eslint', 'fix-build', 'fix-tsc'],
         default=None,
-        help="Specific validation steps to run (e.g., fix-eslint fix-tsc). If not specified, all steps will run in sequence."
+        help="Specific validation steps to run (e.g., fix-eslint fix-build fix-tsc). If not specified, all steps will run in sequence."
     )
     
     # List supported components command
@@ -324,29 +332,21 @@ def main():
     if not args.command:
         args.command = "migrate"
         args.component = "TUXButton"
-        args.file_path = "packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx"
+        args.file_path = "src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx"
         args.max_retries = 3
+        args.subrepo_path = "packages/apps/tiktok_live_web/e-commerce/after-sale-collection"
     
     # Execute the appropriate command
-    if args.command == "test-git":
-        print("Testing Git operations...")
-        success = test_git_operations(
-            file_path=args.file_path
-        )
-        
-        if success:
-            print("Git operations test completed successfully!")
-        else:
-            print("Git operations test failed!")
-            sys.exit(1)
-    
-    elif args.command == "migrate":
+    if args.command == "migrate":
         print(f"Migrating {args.component} component in {args.file_path}...")
+        if args.subrepo_path:
+            print(f"Using subrepo path: {args.subrepo_path}")
         success = migrate_component(
             component_name=args.component,
             file_path=args.file_path,
             max_retries=args.max_retries,
-            steps=args.step
+            steps=args.step,
+            subrepo_path=args.subrepo_path
         )
         
         if success:
