@@ -12,7 +12,7 @@ from src.utils.llm_client import LLMClient
 from src.utils.validation import ValidationOperations
 from tests.test_git_operations import test_git_operations
 
-def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_retries=3):
+def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_retries=3, steps=None):
     """
     Run the validation pipeline on the migrated code
     
@@ -22,6 +22,8 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
         file_path: Path to the file being migrated
         migrated_code: The migrated code to validate
         max_retries: Maximum number of retries for validation steps
+        steps: List of validation steps to run (e.g., ['fix-lint', 'fix-ts'])
+              If None, all steps will be run in sequence
         
     Returns:
         Tuple of (success, final_code)
@@ -34,59 +36,81 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
     file_base, file_ext = os.path.splitext(file_path)
     temp_file_path = f"{file_base}_temp{file_ext}"
     
+    # Define the validation steps mapping
+    validation_steps = {
+        'fix-eslint': {'type': 'eslint', 'name': 'ESLint'},
+        'fix-tsc': {'type': 'typescript', 'name': 'TypeScript'}
+    }
+    
+    # If no specific steps are provided, run all steps in sequence
+    if not steps:
+        steps = ['fix-eslint', 'fix-tsc']
+    
     try:
         print(f"\n=== Running Validation Pipeline ===\n")
+        print(f"Steps to run: {', '.join(steps)}\n")
         
-        # Run the lint validation step
-        print("Running lint validation...")
-        lint_success, updated_code, remaining_errors = validation_ops.run_validation_step(
-            file_path=temp_file_path,
-            code=migrated_code,
-            validation_type='lint',
-            llm_client=llm_client
-        )
+        # Add more detailed logging
+        print(f"Validation steps mapping: {validation_steps}")
         
-        if not lint_success:
-            print("Lint validation failed:")
-            for error in remaining_errors[:5]:  # Show first 5 errors
-                print(f"- {error.get('message', 'Unknown error')}")
+        updated_code = migrated_code
+        
+        # Initialize migration status comment
+        # Set initial status for steps that will be run
+        initial_status = {}
+        for step in steps:
+            if step == 'fix-eslint':
+                initial_status['eslint'] = 'pending'
+            elif step == 'fix-tsc':
+                initial_status['tsc'] = 'pending'
+                
+        # Add the initial status comment to the code
+        if initial_status:
+            updated_code = validation_ops.update_migration_status(temp_file_path, updated_code, initial_status)
+        
+        # Run each validation step in sequence
+        for step in steps:
+            if step not in validation_steps:
+                print(f"Warning: Unknown validation step '{step}'. Skipping.")
+                continue
+                
+            step_info = validation_steps[step]
+            print(f"Running {step_info['name']} validation...")
             
-            if len(remaining_errors) > 5:
-                print(f"... and {len(remaining_errors) - 5} more")
+            step_success, updated_code, remaining_errors = validation_ops.run_validation_step(
+                file_path=temp_file_path,
+                code=updated_code,
+                validation_type=step_info['type'],
+                llm_client=llm_client
+            )
             
-            print("Validation pipeline cannot continue.")
-            return False, updated_code
-        
-        print("Lint validation passed successfully!")
-        
-        # TypeScript validation is commented out for now
-        # print("\nRunning TypeScript validation...")
-        # ts_success, updated_code, remaining_errors = validation_ops.run_validation_step(
-        #     file_path=temp_file_path,
-        #     code=updated_code,
-        #     validation_type='typescript',
-        #     llm_client=llm_client
-        # )
-        # 
-        # if not ts_success:
-        #     print("TypeScript validation failed:")
-        #     for error in remaining_errors[:5]:  # Show first 5 errors
-        #         print(f"- {error.get('message', 'Unknown error')}")
-        #     
-        #     if len(remaining_errors) > 5:
-        #         print(f"... and {len(remaining_errors) - 5} more")
-        #     
-        #     print("Validation pipeline cannot continue.")
-        #     return False, updated_code
-        # 
-        # print("TypeScript validation passed successfully!")
+            if not step_success:
+                print(f"{step_info['name']} validation failed:")
+                for error in remaining_errors[:30]:  # Show first 5 errors
+                    print(f"- {error.get('message', 'Unknown error')}")
+                
+                if len(remaining_errors) > 30:
+                    print(f"... and {len(remaining_errors) - 5} more")
+                
+                print("Validation pipeline cannot continue.")
+                return False, updated_code
+            
+            print(f"{step_info['name']} validation passed successfully!")
         
         print("\n=== Validation Pipeline Complete ===\n")
         print("All validation steps passed successfully!")
         return True, updated_code
     
+    except json.JSONDecodeError as e:
+        print(f"\n=== JSON Parsing Error in Validation Pipeline ===\n")
+        print(f"Error details: {str(e)}")
+        print(f"This error occurred while trying to parse JSON data.")
+        print(f"Check the format of status comments or LLM responses.")
+        return False, migrated_code
     except Exception as e:
-        print(f"Error in validation pipeline: {str(e)}")
+        print(f"\n=== Error in Validation Pipeline ===\n")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
         return False, migrated_code
     finally:
         # Clean up the temporary file
@@ -96,7 +120,7 @@ def run_validation_pipeline(git_ops, llm_client, file_path, migrated_code, max_r
         except Exception as e:
             print(f"Warning: Failed to clean up temporary file: {str(e)}")
 
-def migrate_component(component_name, file_path, max_retries=3):
+def migrate_component(component_name, file_path, max_retries=3, steps=None):
     """
     Migrate a component in the specified file using the LLM client
     
@@ -104,6 +128,8 @@ def migrate_component(component_name, file_path, max_retries=3):
         component_name: Name of the component to migrate (must be supported)
         file_path: Full path to the file containing the component (including any page directory)
         max_retries: Maximum number of retries for validation steps
+        steps: List of validation steps to run (e.g., ['fix-lint', 'fix-ts'])
+              If None, all steps will be run in sequence
         
     Returns:
         True if successful, False otherwise
@@ -158,20 +184,34 @@ def migrate_component(component_name, file_path, max_retries=3):
                 llm_client, 
                 file_path, 
                 final_code,
-                max_retries=max_retries
+                max_retries=max_retries,
+                steps=steps
             )
             
             if validation_success:
                 final_code = validated_code
                 print("\n=== Final Validated Code ===\n")
                 print(final_code)
+                
+                # Ensure the migration status shows completion for all steps
+                final_status = {}
+                for step in steps:
+                    if step == 'fix-eslint':
+                        final_status['eslint'] = 'done'
+                    elif step == 'fix-tsc':
+                        final_status['tsc'] = 'done'
+                        
+                # Update the final status in the code
+                if final_status:
+                    final_code = validation_ops.update_migration_status(temp_file_path, final_code, final_status)
             else:
                 print("\n=== Validation Failed ===\n")
-                print("Migration cannot proceed due to validation failures.")
-                return False
+                print("Migration will proceed despite validation failures.")
+                # Use the migrated code even though validation failed
+                final_code = migration_result["migrated_code"]
         
-        # Prompt user whether to commit changes only if validation was successful
-        if validation_success and final_code and input("\nDo you want to commit these changes? (y/n): ").lower() == 'y':
+        # Prompt user whether to commit changes (regardless of validation success)
+        if final_code and input("\nDo you want to commit these changes? (y/n): ").lower() == 'y':
             # Create a test branch for committing changes
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             # Extract component folder name for branch name
@@ -183,7 +223,10 @@ def migrate_component(component_name, file_path, max_retries=3):
             else:
                 # Use file name without extension for other files
                 file_name = file_basename.split('.')[0]
-            test_branch = f"migration/{component_name}-{file_name}-{timestamp}"
+            
+            # Add validation status to branch name
+            validation_status = "validated" if validation_success else "unvalidated"
+            test_branch = f"migration/{component_name}-{file_name}-{validation_status}-{timestamp}"
             
             # Create the branch BEFORE making any changes
             print(f"Creating branch: {test_branch}")
@@ -191,10 +234,11 @@ def migrate_component(component_name, file_path, max_retries=3):
             print(f"Created and checked out branch: {branch_name}")
             
             print(f"\nCommitting changes to: {file_path}")
+            validation_message = "(validated)" if validation_success else "(unvalidated)"
             commit = git_ops.commit_changes(
                 file_path, 
                 final_code, 
-                f"Migrate {component_name} component in {file_path}"
+                f"Migrate {component_name} component in {file_path} {validation_message}"
             )
             print(f"Committed changes with hash: {commit.hexsha}")
             
@@ -230,7 +274,7 @@ def main():
     git_parser = subparsers.add_parser("test-git", help="Test Git operations with modular path building")
     git_parser.add_argument(
         "--file-path", 
-        default="modules/ReturnShippingModule/index.tsx",
+        default="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx",
         help="Full path to the file to modify (including any page directory)"
     )
     
@@ -254,7 +298,7 @@ def main():
     )
     migrate_parser.add_argument(
         "--file-path", 
-        default="modules/ReturnShippingModule/index.tsx",
+        default="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx",
         help="Full path to the file containing the component (including any page directory)"
     )
     migrate_parser.add_argument(
@@ -262,6 +306,13 @@ def main():
         type=int,
         default=3,
         help="Maximum number of retries for validation steps"
+    )
+    migrate_parser.add_argument(
+        "--step",
+        nargs="*",
+        choices=['fix-eslint', 'fix-tsc'],
+        default=None,
+        help="Specific validation steps to run (e.g., fix-eslint fix-tsc). If not specified, all steps will run in sequence."
     )
     
     # List supported components command
@@ -294,7 +345,8 @@ def main():
         success = migrate_component(
             component_name=args.component,
             file_path=args.file_path,
-            max_retries=args.max_retries
+            max_retries=args.max_retries,
+            steps=args.step
         )
         
         if success:

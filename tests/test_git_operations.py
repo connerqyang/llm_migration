@@ -15,7 +15,6 @@ def test_git_operations(file_path="packages/apps/tiktok_live_web/e-commerce/afte
     
     Args:
         file_path: Full path to the file (including any page directory)
-                  Default is 'modules/ReturnShippingModule/index.tsx'
         
     Returns:
         True if successful, False otherwise
@@ -88,7 +87,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test Git operations with modular path building")
     parser.add_argument(
         "--file-path", 
-        default="modules/ReturnShippingModule/index.tsx",
+        default="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx",
         help="Full path to the file to modify (including any page directory)"
     )
     

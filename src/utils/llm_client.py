@@ -148,6 +148,9 @@ Please migrate ONLY the {component_name} component according to the guidelines p
             Dictionary containing the migrated code and migration notes
         """
         try:
+            # Log the response for debugging
+            print("\nParsing LLM response (first 200 chars):\n", response[:200])
+            
             # Initialize result structure
             result = {
                 "migrated_code": "",
@@ -155,11 +158,35 @@ Please migrate ONLY the {component_name} component according to the guidelines p
             }
             
             # Extract code block (between ```tsx and ```)
-            code_pattern = "```tsx\n(.+?)\n```"
+            code_pattern = r'```tsx\n([\s\S]*?)\n```'
             import re
+            print(f"Using code extraction pattern: {code_pattern}")
             code_match = re.search(code_pattern, response, re.DOTALL)
             if code_match:
                 result["migrated_code"] = code_match.group(1).strip()
+                print(f"Successfully extracted code of length: {len(result['migrated_code'])}")
+            else:
+                print("\nWARNING: Failed to extract code using the primary pattern")
+                # Try alternative patterns
+                alt_patterns = [
+                    r'```(tsx|jsx|js|ts)\n([\s\S]*?)\n```',  # Any language tag
+                    r'```\n([\s\S]*?)\n```'  # No language tag
+                ]
+                
+                for pattern in alt_patterns:
+                    print(f"Trying alternative pattern: {pattern}")
+                    alt_match = re.search(pattern, response, re.DOTALL)
+                    if alt_match:
+                        # If pattern has language tag, group(2) contains the code
+                        # Otherwise group(1) contains the code
+                        code_group = 2 if len(alt_match.groups()) > 1 and alt_match.group(1) else 1
+                        result["migrated_code"] = alt_match.group(code_group).strip()
+                        print(f"Successfully extracted code using alternative pattern, length: {len(result['migrated_code'])}")
+                        break
+                
+                if not result["migrated_code"]:
+                    print("\nERROR: Failed to extract code using all patterns")
+                    print("Full response:\n", response)
             
             # Extract migration notes (after ## Migration Notes)
             notes_pattern = "## Migration Notes\n(.+)$"
