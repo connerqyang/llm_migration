@@ -70,7 +70,7 @@ Parameters:
 The `GitOperations` class provides methods for working with Git repositories using the modular path building approach:
 
 - `__init__(repo_path=None, page_path=None)`: Initialize with optional custom paths
-- `build_file_path(file_path)`: Build a complete file path using the modular components
+- `get_absolute_path(file_path)`: Build a complete file path using the modular components
 - `read_file(file_path)`: Read a file using the modular path
 - `commit_changes(file_path, content, commit_message)`: Write and commit changes
 - `create_branch(branch_name)`: Create and checkout a new branch

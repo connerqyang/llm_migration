@@ -7,13 +7,12 @@ from pathlib import Path
 load_dotenv()
 
 class GitOperations:
-    def __init__(self, repo_path=None, page_path=None):
+    def __init__(self, repo_path=None):
         """
         Initialize GitOperations with modular path building support.
         
         Args:
             repo_path: Base repository path. If None, uses LOCAL_REPO_PATH from env.
-            page_path: Relative path to the page directory. If None, uses PAGE_PATH from env.
         """
         self.repo_url = os.getenv("GIT_REPO_URL")
         self.auth_token = os.getenv("GIT_AUTH_TOKEN")
@@ -36,9 +35,6 @@ class GitOperations:
         # Use provided repo_path or get from environment
         self.repo_path = repo_path if repo_path else os.getenv("LOCAL_REPO_PATH")
         
-        # Get page path from arguments or environment
-        self.page_path = page_path if page_path else os.getenv("PAGE_PATH", "")
-        
         # Verify the repository path exists
         if not os.path.exists(self.repo_path):
             raise ValueError(f"Repository path does not exist: {self.repo_path}")
@@ -46,19 +42,19 @@ class GitOperations:
         # Use existing repository
         self.repo = Repo(self.repo_path)
         
-    def build_file_path(self, file_path):
+    def get_absolute_path(self, file_path):
         """
-        Build a complete file path using the modular path components
+        Build a complete file path using the repository path and file path
         
         Args:
-            file_path: Relative path to the file within the page directory
+            file_path: Full path to the file including any page directory
             
         Returns:
             Complete path to the file (absolute path)
         """
-        # Join repo_path, page_path, and file_path to create the complete path
+        # Join repo_path and file_path to create the complete path
         # Use Path for better cross-platform path handling
-        return str(Path(self.repo_path) / self.page_path / file_path)
+        return str(Path(self.repo_path) / file_path)
     
     def read_file(self, file_path):
         """
@@ -70,7 +66,7 @@ class GitOperations:
         Returns:
             String content of the file
         """
-        full_path = self.build_file_path(file_path)
+        full_path = self.get_absolute_path(file_path)
         with open(full_path, 'r', encoding='utf-8') as file:
             return file.read()
     
@@ -86,7 +82,7 @@ class GitOperations:
             True if successful, False otherwise
         """
         try:
-            full_path = self.build_file_path(file_path)
+            full_path = self.get_absolute_path(file_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             with open(full_path, 'w', encoding='utf-8') as file:
@@ -160,23 +156,16 @@ class GitOperations:
                 self.repo.git.config('--local', 'user.email', 'llm.migration@example.com')
             
             # Create the full path to the file using the modular path building
-            full_path = self.build_file_path(file_path)
+            full_path = self.get_absolute_path(file_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             # Write the content to the file
             with open(full_path, 'w', encoding='utf-8') as file:
                 file.write(content)
             
-            # Calculate the relative path from repo root for git operations
-            # This is necessary because git operations need paths relative to repo root
-            if self.page_path:
-                git_relative_path = os.path.join(self.page_path, file_path)
-            else:
-                git_relative_path = file_path
-            
             # Add the file to git index
-            print(f"Adding file to git: {git_relative_path}")
-            self.repo.git.add(git_relative_path)
+            print(f"Adding file to git: {file_path}")
+            self.repo.git.add(file_path)
             
             # Commit the changes using git.commit() instead of index.commit()
             print(f"Committing changes with message: {commit_message}")

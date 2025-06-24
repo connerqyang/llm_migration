@@ -8,15 +8,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.git_operations import GitOperations
 
-def test_git_operations(file_path="modules/ReturnShippingModule/index.tsx", page_path=None):
+def test_git_operations(file_path="packages/apps/tiktok_live_web/e-commerce/after-sale-collection/src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx"):
     """
     Test the GitOperations class functionality with modular path building
     by reading an existing file, modifying it, and pushing the changes
     
     Args:
-        file_path: Relative path to the file within the page directory
+        file_path: Full path to the file (including any page directory)
                   Default is 'modules/ReturnShippingModule/index.tsx'
-        page_path: Optional page path to override the one in .env
         
     Returns:
         True if successful, False otherwise
@@ -26,9 +25,8 @@ def test_git_operations(file_path="modules/ReturnShippingModule/index.tsx", page
     
     try:
         print("Initializing GitOperations...")
-        git_ops = GitOperations(page_path=page_path)
+        git_ops = GitOperations()
         print(f"Repository initialized at: {git_ops.repo_path}")
-        print(f"Page path: {git_ops.page_path}")
         
         # Create a test branch
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -39,7 +37,7 @@ def test_git_operations(file_path="modules/ReturnShippingModule/index.tsx", page
         print(f"Created and checked out branch: {branch_name}")
         
         # Show the full path that will be used
-        full_path = git_ops.build_file_path(file_path)
+        full_path = git_ops.get_absolute_path(file_path)
         print(f"Full file path: {full_path}")
         
         # Read the existing file
@@ -91,19 +89,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--file-path", 
         default="modules/ReturnShippingModule/index.tsx",
-        help="Relative path to the file to modify within the page directory"
+        help="Full path to the file to modify (including any page directory)"
     )
-    parser.add_argument(
-        "--page-path", 
-        help="Page path to override the one in .env"
-    )
-
+    
     args = parser.parse_args()
     
     print("Testing Git operations...")
     success = test_git_operations(
-        file_path=args.file_path,
-        page_path=args.page_path
+        file_path=args.file_path
     )
     
     if success:
