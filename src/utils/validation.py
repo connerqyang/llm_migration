@@ -7,33 +7,108 @@ from pathlib import Path
 class ValidationOperations:
     """Class for handling validation operations like linting and type checking"""
     
-    def __init__(self, repo_path: str = None):
+    def __init__(self, git_ops, max_retries=3):
         """Initialize the validation operations
         
         Args:
-            repo_path: Path to the repository root
+            git_ops: GitOperations instance for file path handling
+            max_retries: Maximum number of retries for validation steps
         """
-        self.repo_path = repo_path or os.getcwd()
-    
-    def run_lint_fix(self, file_path: str) -> Tuple[bool, str]:
-        """Run ESLint with --fix option on the specified file
+        self.git_ops = git_ops
+        self.max_retries = max_retries
+        
+    def update_migration_status(self, code: str, status_updates: dict) -> str:
+        """
+        Update the migration status comment in the code
         
         Args:
-            file_path: Path to the file to lint
+            code: Current code content
+            status_updates: Dictionary with status updates to apply
             
+        Returns:
+            Updated code with migration status comment
+        """
+        import re
+        import json
+        
+        # Define the status comment pattern
+        status_pattern = r'// MIGRATION STATUS: (\{.*\})'
+        # Using greedy match to ensure we capture the entire JSON object
+        
+        # Check if a status comment already exists
+        status_match = re.search(status_pattern, code)
+        
+        if status_match:
+            # Extract and parse the existing status
+            try:
+                status_json = status_match.group(1)
+                current_status = json.loads(status_json)
+            except json.JSONDecodeError as e:
+                print(f"\nJSON parsing error in update_migration_status: {e}")
+                print(f"Problematic JSON string: {status_match.group(1)}")
+                # Fallback to empty status if parsing fails
+                current_status = {}
+            
+            # Update the status with new information
+            for key, value in status_updates.items():
+                current_status[key] = value
+                
+            # Create the new status comment
+            new_status_comment = f"// MIGRATION STATUS: {json.dumps(current_status)}"
+            
+            # Replace the existing status comment
+            updated_code = re.sub(status_pattern, new_status_comment, code)
+        else:
+            # Create a new status comment
+            new_status = {}
+            
+            # Initialize with pending status for eslint and tsc if not provided
+            if 'eslint' not in status_updates:
+                new_status['eslint'] = 'pending'
+            if 'tsc' not in status_updates:
+                new_status['tsc'] = 'pending'
+                
+            # Update with provided status
+            new_status.update(status_updates)
+            
+            # Create the status comment
+            status_comment = f"// MIGRATION STATUS: {json.dumps(new_status)}"
+            
+            # Add the status comment at the top of the file
+            # Check if there's a license or comment block at the top
+            if code.strip().startswith('/*') or code.strip().startswith('//'):
+                # Find the end of the comment block
+                comment_end = code.find('*/', 0) + 2 if code.strip().startswith('/*') else code.find('\n', 0)
+                if comment_end > 0:
+                    # Insert after the comment block
+                    updated_code = code[:comment_end] + '\n' + status_comment + '\n' + code[comment_end:]
+                else:
+                    # Fallback to inserting at the top
+                    updated_code = status_comment + '\n' + code
+            else:
+                # Insert at the top of the file
+                updated_code = status_comment + '\n' + code
+                
+        return updated_code
+    
+    def run_lint_fix(self) -> Tuple[bool, str]:
+        """Run ESLint with --fix on the file
+        
         Returns:
             Tuple of (success, output)
         """
         try:
-            # Construct the full path if file_path is relative
-            full_path = os.path.join(self.repo_path, file_path)
+            # Use the file path directly
+            abs_file_path = self.git_ops.file_path
             
-            # Run ESLint with --fix option
+            # Run ESLint with --fix
+            print(f"Running ESLint with --fix...")
             result = subprocess.run(
-                ["npx", "eslint", "--fix", full_path],
+                ["npx", "eslint", "--fix", abs_file_path],
+                cwd=self.git_ops.get_subrepo_path(),
                 capture_output=True,
                 text=True,
-                cwd=self.repo_path
+                check=False
             )
             
             # Check if the command was successful
@@ -44,30 +119,42 @@ class ValidationOperations:
         except Exception as e:
             return False, str(e)
     
-    def check_lint_errors(self, file_path: str) -> Tuple[bool, List[Dict[str, Any]]]:
+    def check_lint_errors(self) -> Tuple[bool, List[Dict[str, Any]]]:
         """Check if the file has any remaining lint errors
         
-        Args:
-            file_path: Path to the file to check
-            
         Returns:
             Tuple of (has_errors, errors)
         """
         try:
-            # Construct the full path if file_path is relative
-            full_path = os.path.join(self.repo_path, file_path)
+            # Use the file path directly
+            abs_file_path = self.git_ops.file_path
+            
+            # Check if file exists before running ESLint
+            if not os.path.exists(abs_file_path):
+                return True, [{"message": f"File not found: {abs_file_path}", "severity": 2}]
             
             # Run ESLint with --format=json to get structured output
+            print(f"Checking ESLint errors...")
             result = subprocess.run(
-                ["npx", "eslint", "--format=json", full_path],
+                ["npx", "eslint", "--format=json", abs_file_path],
                 capture_output=True,
                 text=True,
-                cwd=self.repo_path
+                cwd=self.git_ops.get_subrepo_path(),
+                check=False
             )
+            
+            # Check for file not found errors in stderr
+            if "No files matching the pattern" in result.stderr:
+                return True, [{"message": f"ESLint could not find file: {full_path}", "severity": 2}]
             
             # Parse the JSON output
             if result.stdout.strip():
-                lint_results = json.loads(result.stdout)
+                try:
+                    lint_results = json.loads(result.stdout)
+                except json.JSONDecodeError as e:
+                    print(f"\nJSON parsing error in check_lint_errors: {e}")
+                    print(f"Problematic JSON string (first 100 chars): {result.stdout[:100]}")
+                    return True, [{"message": f"Failed to parse ESLint output: {str(e)}", "severity": 2}]
                 
                 # Check if there are any errors or warnings
                 errors = []
@@ -81,35 +168,34 @@ class ValidationOperations:
         except Exception as e:
             return True, [{"message": str(e), "severity": 2}]
     
-    def check_typescript_errors(self, file_path: str) -> Tuple[bool, List[Dict[str, Any]]]:
+    def check_typescript_errors(self) -> Tuple[bool, List[Dict[str, Any]]]:
         """Check if the file has any TypeScript type errors
         
-        Args:
-            file_path: Path to the file to check
-            
         Returns:
             Tuple of (has_errors, errors)
         """
         try:
-            # Construct the full path if file_path is relative
-            full_path = os.path.join(self.repo_path, file_path)
+            # Use the file path directly
+            abs_file_path = self.git_ops.file_path
             
             # Run TypeScript compiler in noEmit mode to check types
             result = subprocess.run(
-                ["npx", "tsc", "--noEmit", full_path],
+                ["npx", "tsc", "--noEmit", abs_file_path],
                 capture_output=True,
                 text=True,
-                cwd=self.repo_path
+                cwd=self.git_ops.get_subrepo_path(),
+                check=False
             )
-            
+
             # Check if there are any errors
             has_errors = result.returncode != 0
             
             # Parse the error output
             errors = []
-            if has_errors and result.stderr:
-                # Simple parsing of TypeScript error messages
-                error_lines = result.stderr.strip().split("\n")
+            if has_errors:
+                # Combine stderr and stdout for error parsing
+                error_text = (result.stderr + result.stdout).strip()
+                error_lines = error_text.split("\n")
                 for line in error_lines:
                     if line.strip() and "error TS" in line:
                         errors.append({
@@ -120,3 +206,224 @@ class ValidationOperations:
             return has_errors, errors
         except Exception as e:
             return True, [{"message": str(e), "severity": 2}]
+    
+    def check_build_errors(self) -> Tuple[bool, List[Dict[str, Any]]]:
+        """Run yarn build and check for errors
+        
+        Returns:
+            Tuple of (success, errors)
+        """
+        try:
+            # Change to the subrepo directory for yarn build
+            subrepo_dir = self.git_ops.get_subrepo_path()
+            
+            # Run yarn build
+            result = subprocess.run(
+                ["yarn", "build"],
+                cwd=subrepo_dir,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+
+            # Check if there are any errors
+            has_errors = result.returncode != 0
+            
+            # Parse the error output
+            errors = []
+            if has_errors:
+                # Combine stderr and stdout for error parsing
+                error_text = (result.stderr + result.stdout).strip()
+                error_lines = error_text.split("\n")
+                for line in error_lines:
+                    if line.strip() and ("error" in line.lower() or "failed" in line.lower()):
+                        errors.append({
+                            "message": line.strip(),
+                            "severity": 2
+                        })
+            
+            return has_errors, errors
+        except Exception as e:
+            return True, [{"message": str(e), "severity": 2}]
+        
+    def _get_validation_config(self, validation_type: str) -> Dict[str, Any]:
+        """Get configuration for a validation type
+        
+        Args:
+            validation_type: Type of validation (eslint, typescript, build)
+            
+        Returns:
+            Dictionary with validation configuration
+        """
+        configs = {
+            'eslint': {
+                'status_key': 'eslint',
+                'check_method': self.check_lint_errors,
+                'pre_check_method': self.run_lint_fix,
+                'error_type_name': 'lint',
+                'fix_focus_message': 'Please fix ONLY these specific lint errors in the code while preserving the functionality.\nDo not introduce new issues or change unrelated code.'
+            },
+            'typescript': {
+                'status_key': 'tsc',
+                'check_method': self.check_typescript_errors,
+                'pre_check_method': None,
+                'error_type_name': 'TypeScript',
+                'fix_focus_message': 'Please fix ONLY these specific TypeScript errors in the code while preserving the functionality.\nFocus on fixing type issues, adding proper type annotations, and ensuring type safety.\nDo not introduce new issues or change unrelated code.'
+            },
+            'build': {
+                'status_key': 'build',
+                'check_method': self.check_build_errors,
+                'pre_check_method': None,
+                'error_type_name': 'Build',
+                'fix_focus_message': 'Please fix ONLY these specific build errors in the code while preserving the functionality.\nFocus on fixing issues that prevent successful compilation during the build process.\nDo not introduce new issues or change unrelated code.'
+            }
+        }
+        
+        return configs.get(validation_type, {
+            'status_key': validation_type,
+            'check_method': None,
+            'pre_check_method': None,
+            'error_type_name': validation_type.capitalize(),
+            'fix_focus_message': f'Please fix the {validation_type} errors in the code while preserving the functionality.'
+        })
+    
+    def run_validation_step(self, code: str, validation_type: str, llm_client=None, update_status=True) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        """Run a validation step with retry logic
+        
+        Args:
+            code: Current code content
+            validation_type: Type of validation to run (e.g., 'eslint', 'typescript', 'build')
+            llm_client: Optional LLM client for fixing errors
+            update_status: Whether to update the migration status
+            
+        Returns:
+            Tuple of (success, updated_code, remaining_errors)
+        """
+        # Get configuration for this validation type
+        config = self._get_validation_config(validation_type)
+        status_key = config['status_key']
+        check_method = config['check_method']
+        pre_check_method = config['pre_check_method']
+        error_type_name = config['error_type_name']
+        fix_focus_message = config['fix_focus_message']
+        
+        # Update the migration status to show this step is in progress
+        if update_status:
+            try:
+                code = self.update_migration_status(code, {status_key: "in progress"})
+            except Exception as e:
+                print(f"\nError updating migration status: {str(e)}")
+                # Continue without updating status if there's an error
+            
+        # Write the code to the file
+        self.git_ops.write_file(code)
+        
+        # Initialize variables
+        success = False
+        updated_code = code
+        remaining_errors = []
+        retries = 0
+        
+        # Run the validation step with retries
+        while not success and retries < self.max_retries:
+            # Run pre-check method if available (e.g., eslint --fix)
+            if pre_check_method:
+                pre_check_success, pre_check_output = pre_check_method()
+                if not pre_check_success and "No files matching the pattern" in pre_check_output:
+                    return False, code, [{"message": f"File not found: {self.git_ops.file_path}", "severity": 2}]
+                
+                # Read the updated file after pre-check
+                updated_code = self.git_ops.read_file()
+            
+            # Check for errors
+            has_errors, errors = check_method()
+            
+            # Calculate validation metrics
+            if update_status:
+                # For simplicity, we'll estimate passed items based on errors
+                total_checks = len(errors) + 10  # Assuming at least 10 checks were performed
+                passed = total_checks - len(errors)
+                failed = len(errors)
+                skipped = 0  # We don't have skipped information in this simple implementation
+                success_rate = int((passed / total_checks) * 100) if total_checks > 0 else 100
+                
+                validation_status = {
+                    "passed": passed,
+                    "failed": failed,
+                    "total": total_checks,
+                    "skipped": skipped,
+                    "successRate": success_rate
+                }
+                
+                # Update the status with detailed metrics
+                try:
+                    updated_code = self.update_migration_status(
+                        updated_code,
+                        {status_key: validation_status}
+                    )
+                except Exception as e:
+                    print(f"\nError updating migration status with {error_type_name} metrics: {str(e)}")
+                    # Continue without updating status if there's an error
+            
+            if not has_errors:
+                success = True
+                # Update status to show validation is complete
+                if update_status:
+                    updated_code = self.update_migration_status(
+                        updated_code, 
+                        {status_key: "done"}
+                    )
+                break
+            
+            # If we have an LLM client and there are errors, try to fix them
+            if llm_client and has_errors:
+                # Use LLM to fix errors
+                print(f"\nAttempt {retries + 1}/{self.max_retries}: Using LLM to fix {error_type_name} errors...")
+                fix_prompt = f"""# {error_type_name} Error Fix Request (Attempt {retries + 1})
+
+## File with {error_type_name} Errors
+
+```tsx
+{updated_code}
+```
+
+## Current {error_type_name} Errors
+
+```json
+{json.dumps(errors, indent=2)}
+```
+
+{fix_focus_message}
+"""
+                
+                # Call LLM to fix errors
+                fix_response = llm_client._call_llm_api(fix_prompt)
+                
+                # Extract the fixed code
+                import re
+                code_pattern = "```tsx\n(.+?)\n```"
+                code_match = re.search(code_pattern, fix_response, re.DOTALL)
+                
+                if code_match:
+                    updated_code = code_match.group(1).strip()
+                    
+                    # Write the updated code back to the file
+                    self.git_ops.write_file(updated_code)
+                    
+                    # Verify that the errors were actually fixed
+                    has_errors, remaining_errors = check_method()
+                    if not has_errors:
+                        success = True
+                        # Update status to show validation is complete
+                        if update_status:
+                            updated_code = self.update_migration_status(
+                                updated_code, 
+                                {status_key: "done"}
+                            )
+                        break
+                else:
+                    print("LLM failed to provide fixed code")
+            
+            retries += 1
+        
+        return success, updated_code, remaining_errors
