@@ -26,6 +26,9 @@ def run_validation_pipeline(git_ops, llm_client, migrated_code, max_retries=3, s
     Returns:
         Tuple of (success, final_code)
     """
+    # Import icons from ValidationOperations
+    from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+    
     # Initialize ValidationOperations
     validation_ops = ValidationOperations(git_ops=git_ops, max_retries=max_retries)
     
@@ -46,8 +49,12 @@ def run_validation_pipeline(git_ops, llm_client, migrated_code, max_retries=3, s
         steps = ['fix-eslint', 'fix-build', 'fix-tsc']
     
     try:
-        print(f"\n=== Running Validation Pipeline ===\n")
-        print(f"Steps to run: {', '.join(steps)}\n")
+        # Print a more visually appealing header
+        print(f"\n{INFO_ICON} VALIDATION PIPELINE STARTED")
+        print(f"{'-'*60}")
+        print(f"File: {git_ops.file_path}")
+        print(f"Steps to run: {', '.join(steps)}")
+        print(f"{'-'*60}\n")
         
         updated_code = migrated_code
         
@@ -65,15 +72,22 @@ def run_validation_pipeline(git_ops, llm_client, migrated_code, max_retries=3, s
         # Add the initial status comment to the code
         if initial_status:
             updated_code = validation_ops.update_migration_status(updated_code, initial_status)
+            print(f"Initialized migration status for validation steps")
         
         # Run each validation step in sequence
+        total_steps = len(steps)
+        current_step = 0
+        
         for step in steps:
+            current_step += 1
             if step not in validation_steps:
-                print(f"Warning: Unknown validation step '{step}'. Skipping.")
+                print(f"{WARNING_ICON} UNKNOWN VALIDATION STEP")
+                print(f"Step '{step}' not recognized. Skipping.")
                 continue
                 
             step_info = validation_steps[step]
-            print(f"Running {step_info['name']} validation...")
+            print(f"\nStep {current_step}/{total_steps}: {step_info['name']} Validation")
+            print(f"{'-'*50}")
             
             step_success, updated_code, remaining_errors = validation_ops.run_validation_step(
                 code=updated_code,
@@ -82,40 +96,43 @@ def run_validation_pipeline(git_ops, llm_client, migrated_code, max_retries=3, s
             )
             
             if not step_success:
-                print(f"{step_info['name']} validation failed:")
-                for error in remaining_errors[:30]:  # Show first 30 errors
-                    print(f"- {error.get('message', 'Unknown error')}")
-                
-                if len(remaining_errors) > 30:
-                    print(f"... and {len(remaining_errors) - 30} more")
-                
-                print("Validation pipeline cannot continue.")
+                print(f"\n{ERROR_ICON} VALIDATION STEP FAILED")
+                print(f"{step_info['name']} validation failed after all attempts")
                 return False, updated_code
             
-            print(f"{step_info['name']} validation passed successfully!")
+            print(f"Step {current_step}/{total_steps} completed: {step_info['name']} validation passed successfully")
         
-        print("\n=== Validation Pipeline Complete ===\n")
-        print("All validation steps passed successfully!")
+        # Print a visually appealing completion message
+        print(f"\n{SUCCESS_ICON} VALIDATION PIPELINE COMPLETED SUCCESSFULLY")
+        print(f"{'-'*60}")
+        print(f"All {total_steps} validation steps passed!")
+        print(f"{'-'*60}")
         return True, updated_code
     
     except json.JSONDecodeError as e:
-        print(f"\n=== JSON Parsing Error in Validation Pipeline ===\n")
+        print(f"\n{ERROR_ICON} JSON PARSING ERROR IN VALIDATION PIPELINE")
+        print(f"{'-'*60}")
         print(f"Error details: {str(e)}")
         print(f"This error occurred while trying to parse JSON data.")
         print(f"Check the format of status comments or LLM responses.")
+        print(f"{'-'*60}")
         return False, migrated_code
     except Exception as e:
-        print(f"\n=== Error in Validation Pipeline ===\n")
+        print(f"\n{ERROR_ICON} ERROR IN VALIDATION PIPELINE")
+        print(f"{'-'*60}")
         print(f"Error type: {type(e).__name__}")
         print(f"Error details: {str(e)}")
+        print(f"{'-'*60}")
         return False, migrated_code
     finally:
         # Clean up the temporary file
         try:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
+                print(f"Temporary file cleaned up")
         except Exception as e:
-            print(f"Warning: Failed to clean up temporary file: {str(e)}")
+            print(f"{WARNING_ICON} TEMPORARY FILE CLEANUP FAILED")
+            print(f"Error: {str(e)}")
 
 def migrate_component(component_name, file_path, max_retries=3, steps=None, subrepo_path=""):
     """Migrate a component in the specified file using the LLM client
@@ -131,59 +148,71 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None, subr
     Returns:
         True if successful, False otherwise
     """
+    # Import icons from ValidationOperations
+    from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+    
     git_ops = None
     test_branch = None
     commit = None
     
     try:
-        print(f"Initializing component migration for {component_name}...")
+        # Import icons from ValidationOperations
+        from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+        
+        print(f"{INFO_ICON} INITIALIZING COMPONENT MIGRATION")
+        print(f"{'-'*60}")
+        print(f"Component: {component_name}")
         
         # Initialize GitOperations for file access
         repo_path = os.getenv("LOCAL_REPO_PATH")
-        print(f"Attempting to initialize repository at: {repo_path} with subrepo: {subrepo_path if subrepo_path else 'None'}")
+        print(f"Repository: {repo_path}")
+        print(f"Subrepo: {subrepo_path if subrepo_path else 'None'}")
         
         # Check if the repository path exists
         if not os.path.exists(repo_path):
-            print(f"Error: Repository path does not exist: {repo_path}")
+            print(f"{ERROR_ICON} REPOSITORY PATH NOT FOUND")
+            print(f"Path: {repo_path}")
             return False
             
         # Check if the subrepo path exists if provided
         if subrepo_path and not os.path.exists(os.path.join(repo_path, subrepo_path)):
-            print(f"Error: Subrepository path does not exist: {os.path.join(repo_path, subrepo_path)}")
+            print(f"{ERROR_ICON} SUBREPOSITORY PATH NOT FOUND")
+            print(f"Path: {os.path.join(repo_path, subrepo_path)}")
             print(f"Please check that the subrepo-path '{subrepo_path}' is correct and exists within {repo_path}")
             return False
             
         git_ops = GitOperations(repo_path=repo_path, subrepo_path=subrepo_path, file_path=file_path)
-        print(f"Repository initialized at: {git_ops.repo_path} with subrepo: {git_ops.subrepo_path if git_ops.subrepo_path else 'None'}")
+        print(f"Repository initialized successfully")
         
         # Show the full path that will be used
         full_path = git_ops.file_path
         print(f"Full file path: {full_path}")
+        print(f"{'-'*60}")
         
         # Read the file
-        print(f"Reading file: {full_path}")
+        print(f"{PENDING_ICON} READING SOURCE FILE")
         try:
             original_content = git_ops.read_file()
             print(f"Successfully read file: {file_path}")
             print(f"Original file content (first 100 chars): {original_content[:100]}...")
         except Exception as e:
-            print(f"Error reading file: {str(e)}")
+            print(f"{ERROR_ICON} FILE READ ERROR")
+            print(f"Error details: {str(e)}")
             return False
         
         # Initialize LLM client
-        print("Initializing LLM client...")
+        print(f"{PENDING_ICON} INITIALIZING MIGRATION")
         llm_client = LLMClient()
-        
-        # Migrate the component
-        print(f"Migrating {component_name} component...")
         migration_result = llm_client.migrate_component(component_name, original_content)
         
         # Print migration results
-        print("\n=== Migration Complete ===\n")
-        print("=== Migrated Code ===\n")
-        print(migration_result["migrated_code"])
-        print("\n=== Migration Notes ===\n")
-        print(migration_result["migration_notes"])
+        print(f"\n{SUCCESS_ICON} MIGRATION COMPLETE")
+        print(f"{'-'*60}")
+        print(f"=== Migrated Code ===\n")
+        print(f"{migration_result['migrated_code']}")
+        print(f"\n=== Migration Notes ===\n")
+        print(f"{migration_result['migration_notes']}")
+        print(f"{'-'*60}")
         
         # Run validation pipeline if there's migrated code
         final_code = migration_result["migrated_code"]
@@ -200,8 +229,9 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None, subr
             
             if validation_success:
                 final_code = validated_code
-                print("\n=== Final Validated Code ===\n")
-                print(final_code)
+                print(f"\n{SUCCESS_ICON} FINAL VALIDATED CODE")
+                print(f"{'-'*60}")
+                print(f"{final_code}")
                 
                 # Ensure the migration status shows completion for all steps
                 final_status = {}
@@ -215,15 +245,18 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None, subr
                         
                 # Update the final status in the code
                 if final_status:
+                    validation_ops = ValidationOperations(git_ops=git_ops, max_retries=max_retries)
                     final_code = validation_ops.update_migration_status(final_code, final_status)
             else:
-                print("\n=== Validation Failed ===\n")
-                print("Migration will proceed despite validation failures.")
+                print(f"\n{WARNING_ICON} VALIDATION FAILED")
+                print(f"{'-'*60}")
+                print(f"Migration will proceed despite validation failures.")
+                print(f"{'-'*60}")
                 # Use the migrated code even though validation failed
                 final_code = migration_result["migrated_code"]
         
         # Prompt user whether to commit changes (regardless of validation success)
-        if final_code and input("\nDo you want to commit these changes? (y/n): ").lower() == 'y':
+        if final_code and input(f"\n{INFO_ICON} COMMIT CHANGES? (y/n): ").lower() == 'y':
             # Create a test branch for committing changes
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             # Extract component folder name for branch name
@@ -241,11 +274,13 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None, subr
             test_branch = f"migration/{component_name}-{file_name}-{validation_status}-{timestamp}"
             
             # Create the branch BEFORE making any changes
+            print(f"{PENDING_ICON} GIT OPERATIONS")
+            print(f"{'-'*60}")
             print(f"Creating branch: {test_branch}")
             branch_name = git_ops.create_branch(test_branch)
             print(f"Created and checked out branch: {branch_name}")
             
-            print(f"\nCommitting changes to: {file_path}")
+            print(f"Committing changes to: {file_path}")
             validation_message = "(validated)" if validation_success else "(unvalidated)"
             commit = git_ops.commit_changes(
                 final_code, 
@@ -257,25 +292,35 @@ def migrate_component(component_name, file_path, max_retries=3, steps=None, subr
             print(f"Pushing branch {test_branch} to remote...")
             result = git_ops.push_changes(test_branch)
             print(f"Push result: {result}")
+            print(f"{'-'*60}")
         
         return True
     except Exception as e:
+        print(f"\n{ERROR_ICON} ERROR DURING MIGRATION")
+        print(f"{'-'*60}")
         print(f"Error: {str(e)}")
+        print(f"{'-'*60}")
+        import traceback
+        traceback.print_exc()
         return False
     finally:
         # Clean up the test branch if created and user wants to clean up
         if git_ops and test_branch and commit and test_branch in [b.name for b in git_ops.repo.branches] and input("Do you want to clean up the test branch? (y/n): ").lower() == 'y':
-            print("\nCleaning up test resources...")
+            print(f"\n{PENDING_ICON} CLEANUP OPERATIONS")
             cleanup_success = git_ops.cleanup_branch(test_branch)
             if cleanup_success:
                 print(f"Successfully cleaned up branch: {test_branch}")
             else:
-                print(f"Warning: Failed to clean up branch: {test_branch}")
+                print(f"{WARNING_ICON} Failed to clean up branch: {test_branch}")
+            print(f"{'-'*60}")
 
 def main():
     """
     Main entry point
     """
+    # Import icons from ValidationOperations
+    from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+    
     parser = argparse.ArgumentParser(description="LLM-based UI component migration tool")
     
     # Create subparsers for different commands
@@ -285,12 +330,16 @@ def main():
     migrate_parser = subparsers.add_parser("migrate", help="Migrate a UI component")
     
     # Initialize LLM client to get supported components
+    print(f"{PENDING_ICON} INITIALIZING COMPONENTS LIST")
     try:
         llm_client = LLMClient()
         supported_components = llm_client.get_supported_components()
+        print(f"Found {len(supported_components)} supported components")
     except Exception as e:
-        print(f"Warning: Could not initialize LLM client to get supported components: {str(e)}")
+        print(f"{WARNING_ICON} Could not initialize LLM client to get supported components: {str(e)}")
         supported_components = ["TUXButton"]  # Fallback to hardcoded list
+        print(f"Using fallback list of supported components: {supported_components}")
+    print(f"{'-'*60}")
     
     migrate_parser.add_argument(
         "--component", 
@@ -335,12 +384,22 @@ def main():
         args.file_path = "src/pages/Refund/containers/refunddetail-global/modules/ReturnShippingModule/index.tsx"
         args.max_retries = 3
         args.subrepo_path = "packages/apps/tiktok_live_web/e-commerce/after-sale-collection"
+        print(f"No command specified, defaulting to 'migrate' with TUXButton component")
     
     # Execute the appropriate command
     if args.command == "migrate":
-        print(f"Migrating {args.component} component in {args.file_path}...")
+        print(f"{INFO_ICON} STARTING COMPONENT MIGRATION {'='*25}")
+        print(f"Component: {args.component}")
+        print(f"File path: {args.file_path}")
         if args.subrepo_path:
-            print(f"Using subrepo path: {args.subrepo_path}")
+            print(f"Subrepo path: {args.subrepo_path}")
+        print(f"Max retries: {args.max_retries}")
+        if args.step:
+            print(f"Selected validation steps: {', '.join(args.step)}")
+        else:
+            print(f"Running all validation steps")
+        print(f"{'-'*60}")
+        
         success = migrate_component(
             component_name=args.component,
             file_path=args.file_path,
@@ -350,26 +409,19 @@ def main():
         )
         
         if success:
-            print("Component migration completed successfully!")
+            print(f"\n{SUCCESS_ICON} MIGRATION COMPLETED SUCCESSFULLY")
+            sys.exit(0)
         else:
-            print("Component migration failed!")
+            print(f"\n{ERROR_ICON} MIGRATION FAILED")
             sys.exit(1)
     
     elif args.command == "list":
-        try:
-            llm_client = LLMClient()
-            components = llm_client.get_supported_components()
-            
-            if components:
-                print("Supported components for migration:")
-                for component in components:
-                    print(f"- {component}")
-            else:
-                print("No supported components found.")
-                print("Add component migration guides to src/prompts/components/ directory.")
-        except Exception as e:
-            print(f"Error listing supported components: {str(e)}")
-            sys.exit(1)
+        print(f"\n{INFO_ICON} SUPPORTED COMPONENTS FOR MIGRATION {'='*20}")
+        for component in supported_components:
+            print(f"- {component}")
+        print(f"Total: {len(supported_components)} components")
+        print(f"{'-'*60}")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

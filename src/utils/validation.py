@@ -4,6 +4,13 @@ import json
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 
+# Icons for console output
+SUCCESS_ICON = "✅"
+ERROR_ICON = "❌"
+WARNING_ICON = "⚠️"
+INFO_ICON = "ℹ️"
+PENDING_ICON = "⏳"
+
 class ValidationOperations:
     """Class for handling validation operations like linting and type checking"""
     
@@ -44,7 +51,8 @@ class ValidationOperations:
                 status_json = status_match.group(1)
                 current_status = json.loads(status_json)
             except json.JSONDecodeError as e:
-                print(f"\nJSON parsing error in update_migration_status: {e}")
+                print(f"\n{ERROR_ICON} JSON PARSING ERROR")
+                print(f"Error details: {e}")
                 print(f"Problematic JSON string: {status_match.group(1)}")
                 # Fallback to empty status if parsing fails
                 current_status = {}
@@ -102,7 +110,7 @@ class ValidationOperations:
             abs_file_path = self.git_ops.file_path
             
             # Run ESLint with --fix
-            print(f"Running ESLint with --fix...")
+            print(f"{PENDING_ICON} RUNNING ESLINT FIX")
             result = subprocess.run(
                 ["npx", "eslint", "--fix", abs_file_path],
                 cwd=self.git_ops.get_subrepo_path(),
@@ -134,7 +142,7 @@ class ValidationOperations:
                 return True, [{"message": f"File not found: {abs_file_path}", "severity": 2}]
             
             # Run ESLint with --format=json to get structured output
-            print(f"Checking ESLint errors...")
+            print(f"{PENDING_ICON} CHECKING ESLINT ERRORS")
             result = subprocess.run(
                 ["npx", "eslint", "--format=json", abs_file_path],
                 capture_output=True,
@@ -152,7 +160,8 @@ class ValidationOperations:
                 try:
                     lint_results = json.loads(result.stdout)
                 except json.JSONDecodeError as e:
-                    print(f"\nJSON parsing error in check_lint_errors: {e}")
+                    print(f"\n{ERROR_ICON} ESLINT OUTPUT PARSING ERROR")
+                    print(f"Error details: {e}")
                     print(f"Problematic JSON string (first 100 chars): {result.stdout[:100]}")
                     return True, [{"message": f"Failed to parse ESLint output: {str(e)}", "severity": 2}]
                 
@@ -307,12 +316,18 @@ class ValidationOperations:
         error_type_name = config['error_type_name']
         fix_focus_message = config['fix_focus_message']
         
+        # Print validation step header with improved formatting
+        print(f"\n{INFO_ICON} STARTING {error_type_name.upper()} VALIDATION")
+        print(f"{'-'*50}")
+        
         # Update the migration status to show this step is in progress
         if update_status:
             try:
                 code = self.update_migration_status(code, {status_key: "in progress"})
+                print(f"Migration status updated: {error_type_name} validation in progress")
             except Exception as e:
-                print(f"\nError updating migration status: {str(e)}")
+                print(f"{ERROR_ICON} MIGRATION STATUS UPDATE FAILED")
+                print(f"Error details: {str(e)}")
                 # Continue without updating status if there's an error
             
         # Write the code to the file
@@ -328,15 +343,31 @@ class ValidationOperations:
         while not success and retries < self.max_retries:
             # Run pre-check method if available (e.g., eslint --fix)
             if pre_check_method:
+                print(f"{PENDING_ICON} RUNNING PRE-CHECK FOR {error_type_name.upper()}")
                 pre_check_success, pre_check_output = pre_check_method()
                 if not pre_check_success and "No files matching the pattern" in pre_check_output:
+                    print(f"{ERROR_ICON} FILE NOT FOUND")
+                    print(f"Path: {self.git_ops.file_path}")
                     return False, code, [{"message": f"File not found: {self.git_ops.file_path}", "severity": 2}]
                 
                 # Read the updated file after pre-check
                 updated_code = self.git_ops.read_file()
             
             # Check for errors
+            print(f"{PENDING_ICON} CHECKING FOR {error_type_name.upper()} ERRORS")
             has_errors, errors = check_method()
+            
+            # Display errors immediately, regardless of retry status
+            if has_errors:
+                print(f"{ERROR_ICON} FOUND {len(errors)} {error_type_name.upper()} ERRORS")
+                # Print the first 10 errors
+                for i, error in enumerate(errors[:10]):
+                    print(f"  Error {i+1}: {error.get('message', 'Unknown error')}")
+                
+                if len(errors) > 10:
+                    print(f"  ... and {len(errors) - 10} more errors")
+            else:
+                print(f"{SUCCESS_ICON} NO ERRORS FOUND")
             
             # Calculate validation metrics
             if update_status:
@@ -361,8 +392,10 @@ class ValidationOperations:
                         updated_code,
                         {status_key: validation_status}
                     )
+                    print(f"Updated migration status: {passed}/{total_checks} checks passed ({success_rate}%)")
                 except Exception as e:
-                    print(f"\nError updating migration status with {error_type_name} metrics: {str(e)}")
+                    print(f"{ERROR_ICON} METRICS UPDATE FAILED")
+                    print(f"Error updating {error_type_name} metrics: {str(e)}")
                     # Continue without updating status if there's an error
             
             if not has_errors:
@@ -373,12 +406,13 @@ class ValidationOperations:
                         updated_code, 
                         {status_key: "done"}
                     )
+                    print(f"{SUCCESS_ICON} VALIDATION COMPLETED SUCCESSFULLY")
                 break
             
             # If we have an LLM client and there are errors, try to fix them
             if llm_client and has_errors:
                 # Use LLM to fix errors
-                print(f"\nAttempt {retries + 1}/{self.max_retries}: Using LLM to fix {error_type_name} errors...")
+                print(f"{PENDING_ICON} FIXING ERRORS WITH LLM (ATTEMPT {retries + 1}/{self.max_retries})")
                 fix_prompt = f"""# {error_type_name} Error Fix Request (Attempt {retries + 1})
 
 ## File with {error_type_name} Errors
@@ -406,11 +440,13 @@ class ValidationOperations:
                 
                 if code_match:
                     updated_code = code_match.group(1).strip()
+                    print(f"LLM provided updated code, applying changes")
                     
                     # Write the updated code back to the file
                     self.git_ops.write_file(updated_code)
                     
                     # Verify that the errors were actually fixed
+                    print(f"{PENDING_ICON} VERIFYING FIXES")
                     has_errors, remaining_errors = check_method()
                     if not has_errors:
                         success = True
@@ -420,10 +456,23 @@ class ValidationOperations:
                                 updated_code, 
                                 {status_key: "done"}
                             )
+                            print(f"{SUCCESS_ICON} VALIDATION COMPLETED SUCCESSFULLY AFTER LLM FIX")
                         break
+                    else:
+                        print(f"{WARNING_ICON} LLM FIX ATTEMPT INCOMPLETE")
+                        print(f"Attempt {retries + 1} did not resolve all errors. Remaining: {len(remaining_errors)}")
                 else:
-                    print("LLM failed to provide fixed code")
+                    print(f"{ERROR_ICON} LLM FAILED TO PROVIDE FIXED CODE")
             
             retries += 1
+            if retries < self.max_retries and has_errors:
+                print(f"{PENDING_ICON} PROCEEDING TO RETRY {retries + 1}/{self.max_retries}")
+        
+        # Final status report
+        if success:
+            print(f"{SUCCESS_ICON} VALIDATION STEP COMPLETED SUCCESSFULLY")
+        else:
+            print(f"{ERROR_ICON} VALIDATION STEP FAILED")
+            print(f"Failed after {self.max_retries} attempts. Remaining errors: {len(remaining_errors)}")
         
         return success, updated_code, remaining_errors

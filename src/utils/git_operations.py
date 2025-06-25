@@ -3,6 +3,9 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
+# Import console output icons
+from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -62,26 +65,28 @@ class GitOperations:
         
         # Fetch latest changes from remote master branch
         try:
-            print("Fetching latest changes from remote master branch...")
+            print(f"{PENDING_ICON} UPDATING REPOSITORY")
             origin = self.repo.remote(name='origin')
             origin.fetch('master')
             
             # Checkout master branch if it exists locally
             if 'master' in [b.name for b in self.repo.branches]:
-                print("Checking out local master branch...")
+                print(f"Checking out local master branch...")
                 self.repo.git.checkout('master')
             else:
                 # If master branch doesn't exist locally, create it tracking the remote
-                print("Creating local master branch tracking remote...")
+                print(f"Creating local master branch tracking remote...")
                 self.repo.git.checkout('-b', 'master', 'origin/master')
             
             # Pull latest changes from remote
-            print("Pulling latest changes from remote master...")
+            print(f"Pulling latest changes from remote master...")
             origin.pull('master')
-            print("Successfully updated repository with latest changes.")
+            print(f"Successfully updated repository with latest changes.")
+            print(f"{'-'*60}")
         except Exception as e:
-            print(f"Warning: Could not update repository with latest changes: {str(e)}")
-            print("Continuing with existing repository state.")
+            print(f"{WARNING_ICON} Could not update repository with latest changes: {str(e)}")
+            print(f"Continuing with existing repository state.")
+            print(f"{'-'*60}")
             # Don't raise the exception, just continue with the current state
             
     def get_subrepo_path(self):
@@ -125,7 +130,8 @@ class GitOperations:
                 file.write(content)
             return True
         except Exception as e:
-            print(f"Error writing to file: {str(e)}")
+            print(f"{ERROR_ICON} FILE WRITE ERROR")
+            print(f"Details: {str(e)}")
             return False
     
     def create_branch(self, branch_name, base_branch="master"):
@@ -145,7 +151,8 @@ class GitOperations:
             self.repo.git.checkout(base_branch)
         else:
             # This should rarely happen since we already tried to set up master in __init__
-            print(f"Warning: Base branch {base_branch} not found locally. Creating it now.")
+            print(f"{WARNING_ICON} Base branch {base_branch} not found locally")
+            print(f"Creating it now from origin/{base_branch}")
             self.repo.git.checkout('-b', base_branch, f'origin/{base_branch}')
         
         # Check if branch already exists
@@ -181,7 +188,7 @@ class GitOperations:
                 self.repo.git.config('--get', 'user.name')
             except Exception:
                 # Set a temporary user.name
-                print("Setting temporary git user.name")
+                print(f"Setting temporary git user.name: 'LLM Migration Tool'")
                 self.repo.git.config('--local', 'user.name', 'LLM Migration Tool')
                 
             try:
@@ -189,7 +196,7 @@ class GitOperations:
                 self.repo.git.config('--get', 'user.email')
             except Exception:
                 # Set a temporary user.email
-                print("Setting temporary git user.email")
+                print(f"Setting temporary git user.email: 'llm.migration@example.com'")
                 self.repo.git.config('--local', 'user.email', 'llm.migration@example.com')
             
             # Use the file path directly
@@ -201,21 +208,24 @@ class GitOperations:
                 file.write(content)
             
             # Add the file to git index
+            print(f"{PENDING_ICON} COMMITTING CHANGES")
             print(f"Adding file to git: {self.file_path}")
             self.repo.git.add(self.file_path)
             
             # Commit the changes using git.commit() instead of index.commit()
-            print(f"Committing changes with message: {commit_message}")
+            print(f"Committing with message: {commit_message}")
             self.repo.git.commit('-m', commit_message)
             
             # Get the commit object for the latest commit
             commit = self.repo.head.commit
-            print(f"Commit successful: {commit.hexsha}")
+            print(f"{SUCCESS_ICON} Commit successful")
+            print(f"Commit hash: {commit.hexsha}")
             
             return commit
             
         except Exception as e:
-            print(f"Error in commit_changes: {str(e)}")
+            print(f"{ERROR_ICON} COMMIT FAILED")
+            print(f"Error details: {str(e)}")
             # Print more detailed git status for debugging
             print(f"Git status: {self.repo.git.status()}")
             raise
@@ -275,12 +285,14 @@ class GitOperations:
             self.repo.git.checkout(default_branch)
             
             # Delete the branch
-            print(f"Deleting local branch: {branch_name}")
+            print(f"{PENDING_ICON} DELETING LOCAL BRANCH")
+            print(f"Branch name: {branch_name}")
             self.repo.git.branch('-D', branch_name)
-            print(f"Local branch {branch_name} deleted successfully")
+            print(f"{SUCCESS_ICON} Branch deleted successfully")
             return True
         except Exception as e:
-            print(f"Error deleting local branch {branch_name}: {str(e)}")
+            print(f"{ERROR_ICON} BRANCH DELETION FAILED")
+            print(f"Error deleting branch {branch_name}: {str(e)}")
             return False
     
     def delete_remote_branch(self, branch_name):
@@ -299,13 +311,15 @@ class GitOperations:
                 raise ValueError("No remote configured")
             
             origin = self.repo.remote(name='origin')
-            print(f"Deleting remote branch: {branch_name}")
+            print(f"{PENDING_ICON} DELETING REMOTE BRANCH")
+            print(f"Branch name: {branch_name}")
             # The syntax for deleting a remote branch is to push an empty reference
             result = origin.push(f":{branch_name}")
-            print(f"Remote branch {branch_name} deleted successfully")
+            print(f"{SUCCESS_ICON} Remote branch deleted successfully")
             return True
         except Exception as e:
-            print(f"Error deleting remote branch {branch_name}: {str(e)}")
+            print(f"{ERROR_ICON} REMOTE BRANCH DELETION FAILED")
+            print(f"Error deleting branch {branch_name}: {str(e)}")
             return False
     
     def cleanup_branch(self, branch_name):

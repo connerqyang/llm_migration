@@ -5,6 +5,9 @@ from typing import Dict, List, Optional, Union, Any
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# Import console output icons
+from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -63,7 +66,8 @@ class LLMClient:
             # Extract component names (filename without extension)
             return [file.stem for file in component_files]
         except Exception as e:
-            print(f"Error getting supported components: {str(e)}")
+            print(f"{ERROR_ICON} Error getting supported components")
+            print(f"Details: {str(e)}")
             return []
     
     def migrate_component(self, component_name: str, component_code: str) -> Dict[str, Any]:
@@ -125,7 +129,8 @@ Please migrate ONLY the {component_name} component according to the guidelines p
                 model=self.model,
                 messages=messages,
                 temperature=0,  # Lower temperature for more deterministic outputs
-                max_tokens=8000,  # Adjust based on expected response length
+                max_completion_tokens=10000,  # Adjust based on expected response length
+                user="tiktok_llm_tux_migration"
             )
             
             # Log the finish reason
@@ -163,7 +168,8 @@ Please migrate ONLY the {component_name} component according to the guidelines p
                 result["migrated_code"] = code_match.group(1).strip()
                 print(f"Successfully extracted code of length: {len(result['migrated_code'])}")
             else:
-                print("\nWARNING: Failed to extract code using the primary pattern")
+                print(f"\n{WARNING_ICON} CODE EXTRACTION ISSUE")
+                print(f"Failed to extract code using the primary pattern")
                 # Try alternative patterns
                 alt_patterns = [
                     r'```(tsx|jsx|js|ts)\n([\s\S]*?)\n```',  # Any language tag
@@ -182,8 +188,8 @@ Please migrate ONLY the {component_name} component according to the guidelines p
                         break
                 
                 if not result["migrated_code"]:
-                    print("\nERROR: Failed to extract code using all patterns")
-                    print("Full response:\n", response)
+                    print(f"\n{ERROR_ICON} Failed to extract code using all patterns")
+                    print(f"Full response:\n", response)
             
             # Extract migration notes (after ## Migration Notes)
             notes_pattern = "## Migration Notes\n(.+)$"
@@ -193,7 +199,8 @@ Please migrate ONLY the {component_name} component according to the guidelines p
             
             return result
         except Exception as e:
-            print(f"Error parsing LLM response: {str(e)}")
+            print(f"{ERROR_ICON} ERROR PARSING LLM RESPONSE")
+            print(f"Details: {str(e)}")
             # Return the raw response if parsing fails
             return {
                 "migrated_code": "",
