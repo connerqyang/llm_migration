@@ -1,12 +1,13 @@
 import os
 import json
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Any, Union, Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Import console output icons
-from src.utils.validation import SUCCESS_ICON, ERROR_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
+# Import icons from validation.py
+from .validation import ERROR_ICON, SUCCESS_ICON, WARNING_ICON, INFO_ICON, PENDING_ICON
 
 # Load environment variables from .env file
 load_dotenv()
@@ -129,12 +130,17 @@ Please migrate ONLY the {component_name} component according to the guidelines p
                 model=self.model,
                 messages=messages,
                 temperature=0,  # Lower temperature for more deterministic outputs
-                max_completion_tokens=10000,  # Adjust based on expected response length
+                max_tokens=50000,  # Adjust based on expected response length
                 user="tiktok_llm_tux_migration"
             )
             
-            # Log the finish reason
-            print(f"LLM Finish Reason: {response.choices[0].finish_reason}")
+            # Check and log the finish reason
+            finish_reason = response.choices[0].finish_reason
+            if finish_reason == "stop":
+                print(f"LLM Finish Reason: {finish_reason}")
+            else:
+                print(f"{ERROR_ICON} WARNING: LLM DID NOT COMPLETE NORMALLY. Finish Reason: {finish_reason}")
+                print(f"{ERROR_ICON} This may indicate truncated output or other issues with the LLM response.")
 
             # Extract and return the response content
             content = response.choices[0].message.content

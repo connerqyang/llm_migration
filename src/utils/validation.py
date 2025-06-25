@@ -360,9 +360,15 @@ class ValidationOperations:
             # Display errors immediately, regardless of retry status
             if has_errors:
                 print(f"{ERROR_ICON} FOUND {len(errors)} {error_type_name.upper()} ERRORS")
-                # Print the first 10 errors
+                # Print the first 10 errors with detailed information
                 for i, error in enumerate(errors[:10]):
-                    print(f"  Error {i+1}: {error.get('message', 'Unknown error')}")
+                    error_message = error.get('message', 'Unknown error')
+                    line_num = error.get('line', 'N/A')
+                    column = error.get('column', 'N/A')
+                    rule_id = error.get('ruleId', '')
+                    rule_info = f" [{rule_id}]" if rule_id else ""
+                    
+                    print(f"  Error {i+1}: Line {line_num}, Col {column}{rule_info}: {error_message}")
                 
                 if len(errors) > 10:
                     print(f"  ... and {len(errors) - 10} more errors")
@@ -460,7 +466,7 @@ class ValidationOperations:
                         break
                     else:
                         print(f"{WARNING_ICON} LLM FIX ATTEMPT INCOMPLETE")
-                        print(f"Attempt {retries + 1} did not resolve all errors. Remaining: {len(remaining_errors)}")
+                        print(f"Attempt {retries + 1} did not resolve all errors. Remaining errors: {len(remaining_errors)}")
                 else:
                     print(f"{ERROR_ICON} LLM FAILED TO PROVIDE FIXED CODE")
             
