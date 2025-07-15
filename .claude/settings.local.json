@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm:*)",
+      "Bash(git add:*)",
+      "Bash(curl:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(mv:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}
