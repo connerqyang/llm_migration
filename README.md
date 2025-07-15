@@ -61,10 +61,12 @@ Use the main.py script to migrate a component:
 python src/main.py migrate --component ComponentName --subrepo-path path/to/subrepo --file-path path/to/component.tsx
 ```
 
-Example with full paths:
+Examples with full paths:
 
 ```bash
 python src/main.py migrate --component TUXIcon --subrepo-path packages/apps/tiktok_live_web/e-commerce/after-sale-collection --file-path src/pages/Refund/containers/refunddetail-global/components/HorizontalProgressLine/components/ProgressNode/index.tsx
+
+python3 src/main.py migrate --component TUXSheet --subrepo-path packages/apps/tiktok_live_web/e-commerce/after-sale-collection --file-path src/pages/Refund/containers/refunddetail-global/modules/ReturnMethodModule/components/DropOffReturnMethod/index.tsx --max-retries 3
 ```
 
 Parameters:
